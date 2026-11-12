@@ -1,0 +1,67 @@
+server:
+  # 8080 is flight-search-app, 8090 is fpl-app; all three run side by side on this machine.
+  port: ${PORT:8091}
+
+spring:
+  application:
+    name: ai-inspect
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+  metrics:
+    distribution:
+      # Publish p50/p95/p99 for the inspection timer, not just count and sum.
+      percentiles:
+        "[inspect.latency]": 0.5,0.95,0.99
+      percentiles-histogram:
+        "[inspect.latency]": true
+
+inspect:
+  # Destinations the organisation has sanctioned. Anything else is "unsanctioned" for policy
+  # purposes - not blocked by default, but a HIGH finding headed there is.
+  sanctioned-destinations:
+    - chat.openai.com
+    - claude.ai
+    - copilot.microsoft.com
+
+  # Evaluated top to bottom; the first rule whose every condition matches decides. No match is
+  # ALLOW. Conditions are AND-ed; an absent condition matches anything.
+  #
+  # Order encodes priority: a live credential is blocked wherever it is going, before the
+  # destination-aware rules are even consulted.
+  policies:
+    - action: BLOCK
+      reason: A live credential never leaves the device, whatever the destination.
+      when:
+        detector: SECRET
+    - action: BLOCK
+      reason: Content is trying to redirect the model or exfiltrate data.
+      when:
+        detector: PROMPT_INJECTION
+        min-score: 0.7
+    - action: NUDGE
+      reason: Content looks like it may be trying to steer the model. Read it before you act on it.
+      when:
+        detector: PROMPT_INJECTION
+        min-score: 0.4
+    - action: BLOCK
+      reason: Sensitive personal or financial data headed to an unsanctioned AI tool.
+      when:
+        severity: HIGH
+        destination: UNSANCTIONED
+    - action: REDACT
+      reason: Sensitive data redacted before reaching a sanctioned AI tool.
+      when:
+        severity: HIGH
+    - action: NUDGE
+      reason: This looks like it contains internal data. Are you sure it should go to an AI tool?
+      when:
+        severity: MEDIUM
+
+  webhook:
+    # Where BLOCK and REDACT decisions are posted. Empty disables delivery entirely.
+    url: ${INSPECT_WEBHOOK_URL:}
+    max-attempts: 3

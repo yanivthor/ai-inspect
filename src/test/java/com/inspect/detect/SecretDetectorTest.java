@@ -1,0 +1,86 @@
+package com.inspect.detect;
+
+import com.inspect.model.Finding;
+import com.inspect.model.Severity;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static com.inspect.Texts.prompt;
+import static org.assertj.core.api.Assertions.assertThat;
+
+class SecretDetectorTest {
+
+    private final SecretDetector detector = new SecretDetector();
+
+    private void assertNoLeak(List<Finding> findings, String secret) {
+        assertThat(findings).isNotEmpty();
+        for (Finding f : findings) assertThat(f.evidence()).doesNotContain(secret);
+    }
+
+    @Test
+    void awsDocumentedExampleKeyIsNotFound() {
+        assertThat(detector.detect(prompt("export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE"))).isEmpty();
+    }
+
+    @Test
+    void realisticAwsKeyIsHigh() {
+        String key = "AKIAJ3K9QZ7MXP2LW5TD";
+        var f = detector.detect(prompt("Here is the key: " + key));
+        assertThat(f).hasSize(1);
+        assertThat(f.get(0).severity()).isEqualTo(Severity.HIGH);
+        assertNoLeak(f, key);
+    }
+
+    @Test
+    void stripeTestKeyIsLow() {
+        String key = "sk_test_4eC39HqLyjWDarjtT1zdp7dc";
+        var f = detector.detect(prompt("key " + key));
+        assertThat(f).hasSize(1);
+        assertThat(f.get(0).severity()).isEqualTo(Severity.LOW);
+        assertNoLeak(f, key);
+    }
+
+    @Test
+    void stripeLiveKeyIsHigh() {
+        String key = "sk_live_51HqLyjWDarjtT1zdp7dcAb9X";
+        var f = detector.detect(prompt("key " + key));
+        assertThat(f).hasSize(1);
+        assertThat(f.get(0).severity()).isEqualTo(Severity.HIGH);
+        assertNoLeak(f, key);
+    }
+
+    @Test
+    void placeholderApiKeyIsNotFound() {
+        assertThat(detector.detect(prompt("api_key = your_api_key_here"))).isEmpty();
+    }
+
+    @Test
+    void changemePasswordIsNotFound() {
+        assertThat(detector.detect(prompt("password: changeme"))).isEmpty();
+    }
+
+    @Test
+    void highEntropyAssignmentIsHigh() {
+        String value = "9fK3mQz8vL2pX7nR4tW1yB6cD0eH5gJ";
+        var f = detector.detect(prompt("api_key: " + value));
+        assertThat(f).hasSize(1);
+        assertThat(f.get(0).severity()).isEqualTo(Severity.HIGH);
+        assertNoLeak(f, value);
+    }
+
+    @Test
+    void privateKeyHeaderIsFound() {
+        var f = detector.detect(prompt("-----BEGIN RSA PRIVATE KEY-----\nMIIEow..."));
+        assertThat(f).hasSize(1);
+        assertThat(f.get(0).severity()).isEqualTo(Severity.HIGH);
+    }
+
+    @Test
+    void jwtIsFound() {
+        String jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        var f = detector.detect(prompt("Authorization: Bearer " + jwt));
+        assertThat(f).hasSize(1);
+        assertNoLeak(f, jwt);
+    }
+}
