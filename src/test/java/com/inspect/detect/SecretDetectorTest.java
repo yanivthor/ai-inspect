@@ -83,4 +83,35 @@ class SecretDetectorTest {
         assertThat(f).hasSize(1);
         assertNoLeak(f, jwt);
     }
+
+    @Test
+    void envStyleAndCamelCaseKeysAreFound() {
+        for (String line : new String[]{
+                "OPENAI_API_KEY=9fK3mQz8vL2pX7nR4tW1yB6cD0eH5gJ",
+                "DB_PASSWORD=9fK3mQz8vL2pX7nR4tW1yB6cD0eH5gJ",
+                "aws_secret_access_key=9fK3mQz8vL2pX7nR4tW1yB6cD0eH5gJ",
+                "dbPassword: 9fK3mQz8vL2pX7nR4tW1yB6cD0eH5gJ"}) {
+            assertThat(detector.detect(prompt(line))).as(line).hasSize(1);
+        }
+    }
+
+    @Test
+    void callsAndPathsAssignedToTokenAreNotSecrets() {
+        assertThat(detector.detect(prompt("token = tokenizer.encode(text)"))).isEmpty();
+        assertThat(detector.detect(prompt("token: /var/run/secrets/kubernetes.io/serviceaccount"))).isEmpty();
+    }
+
+    @Test
+    void anthropicKeyYieldsExactlyOneFinding() {
+        var f = detector.detect(prompt("key sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"));
+        assertThat(f).hasSize(1);
+        assertThat(f.get(0).evidence()).contains("Anthropic");
+    }
+
+    @Test
+    void longIdentifierRunsDoNotBlowUp() {
+        String hostile = "token" + "a.".repeat(50_000);
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofMillis(500),
+                () -> detector.detect(prompt(hostile)));
+    }
 }

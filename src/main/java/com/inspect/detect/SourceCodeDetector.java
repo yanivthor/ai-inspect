@@ -6,6 +6,7 @@ import com.inspect.model.Severity;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -29,6 +30,7 @@ public class SourceCodeDetector implements Detector {
                     + "|.*(?:=>|->|::|==|!=|&&|\\|\\|).*"
                     + "|@\\w+(?:\\(.*\\))?\\s*)$");
 
+    private static final Pattern LINE_BREAK = Pattern.compile("\r?\n");
     private static final int MIN_CODE_LINES = 3;
     private static final double MIN_DENSITY = 0.4;
 
@@ -40,12 +42,19 @@ public class SourceCodeDetector implements Detector {
     @Override
     public List<Finding> detect(Interaction interaction) {
         String text = interaction.text();
-        String[] lines = text.split("\r?\n");
         int nonBlank = 0;
         int codeLike = 0;
         int firstCodeLineOffset = -1;
+        // Walk real separators so offsets stay exact with \r\n (a fixed +1 per line drifts).
+        Matcher sep = LINE_BREAK.matcher(text);
         int offset = 0;
-        for (String line : lines) {
+        boolean more = true;
+        while (more) {
+            int lineEnd;
+            int next;
+            if (sep.find()) { lineEnd = sep.start(); next = sep.end(); }
+            else { lineEnd = text.length(); next = text.length(); more = false; }
+            String line = text.substring(offset, lineEnd);
             if (!line.isBlank()) {
                 nonBlank++;
                 if (CODE_LINE.matcher(line).matches()) {
@@ -53,7 +62,7 @@ public class SourceCodeDetector implements Detector {
                     if (firstCodeLineOffset < 0) firstCodeLineOffset = offset;
                 }
             }
-            offset += line.length() + 1;
+            offset = next;
         }
         if (nonBlank == 0 || codeLike < MIN_CODE_LINES) return List.of();
         double density = (double) codeLike / nonBlank;

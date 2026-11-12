@@ -39,6 +39,13 @@ Read `README.md` for the API and the curl demo; this file is for anyone changing
 - **Webhook delivery is off the request thread** and retries. In production it is a Kafka
   consumer group on the decisions topic; the single-thread executor is the laptop stand-in.
 
+- **The eval corpus lives in main resources (`eval/corpus.jsonl`)** because `/api/eval` and the
+  `/eval` dashboard read it at runtime; `EvalHarnessTest` calls the same `EvalService`, so there
+  is one computation. `EvalService` bypasses `InspectionService` on purpose: an eval run must
+  not count as real decisions or fire webhooks.
+- **`docs/code-review-2026-11-12.md` records every reviewer finding**, fixed or deliberately
+  left. Read it before "improving" a detector: several gaps there are known and chosen.
+
 ## Spring Boot 4 traps (same as the sibling projects)
 
 - Jackson is `tools.jackson.databind.*`; only `jackson-annotations` stayed at `com.fasterxml`.

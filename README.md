@@ -74,6 +74,27 @@ recall / F1, and fails the build on precision below 0.9. Precision is the gate r
 recall because a detector that cries wolf is switched off by its users, after which its recall is
 zero anyway.
 
+## The eval dashboard
+
+```
+./mvnw spring-boot:run        # then open http://localhost:8091/eval
+```
+
+`GET /eval` is a single page served by the backend: the build-gate tiles, per-detector precision /
+recall / F1 with the confusion counts, the mean cost of each detector on a 15 KB document with
+p50 / p95 / p99, every corpus sample with its outcome (filterable by outcome, detector and text),
+and a **Try it** box that posts to `/api/inspect` and highlights the spans it found. It reads two
+endpoints, both recomputed on every call against the detectors currently running:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/eval` | the corpus run: per-detector TP / FP / FN / TN, precision, recall, F1, and every sample with expected vs fired detectors and its outcome |
+| `GET /api/eval/latency?runs=300` | p50 / p95 / p99 / max over `runs` timed inspections of a synthetic 15 KB document, plus the mean cost per detector |
+
+`EvalHarnessTest` calls the same `EvalService`, so the number on the page and the number that
+gates the build cannot disagree. The eval deliberately bypasses `InspectionService`: running the
+corpus must not count as 72 real decisions in the metrics or fire 72 webhooks.
+
 ## What a heuristic cannot do
 
 `SOURCE_CODE` is the honest edge. It separates a pasted class from prose; it cannot tell
@@ -126,14 +147,22 @@ is the same two records on Kafka:
 
 ```
 src/main/java/com/inspect/
+  eval/         EvalService (corpus run + latency benchmark), EvalController (/eval, /api/eval)
   model/        Interaction, Finding, Decision, Severity, Action, Channel, Direction
   detect/       Detector + seven implementations; Luhn, Iban, Entropy, Spans helpers
   policy/       PolicyEngine (first match wins, validates detector ids at startup), Redactor
   service/      InspectionService (timer, isolation, event), WebhookNotifier, InspectionDecided
   config/       InspectProperties (@Validated; the policy lives in application.yml)
   controller/   InspectController, GlobalExceptionHandler (RFC 9457)
+src/main/resources/
+  eval/corpus.jsonl   the labelled corpus (main, not test: the dashboard reads it too)
+  static/eval.html    the dashboard
 src/test/
   …/detect/     one class per detector, positives and near-miss negatives
-  …/eval/       EvalHarnessTest + resources/corpus.jsonl
+  …/eval/       EvalHarnessTest (the build gate, via EvalService)
   …/service/    LatencyTest
+docs/
+  design-decisions.md       dated decisions with reasons
+  code-review-2026-11-12.md what the reviewer found, what was fixed, what was left and why
+  agent-audit/              generated logs of every subagent's actions (scripts/agent_audit.py)
 ```

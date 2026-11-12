@@ -85,3 +85,39 @@ Chronological. Each entry: what was decided, why, and whether it still holds.
     Code's subagent transcripts into `docs/agent-audit/<date>-<task>.md`: model, brief, every
     tool call in order, what it said, token usage. Reason: delegated work needs the same
     reviewability as a PR, and the raw transcript is unreadable. Holds.
+
+20. **The policy picks the most severe matching action, not the first match.** Found in code
+    review: the injection NUDGE rule sat above the BLOCK/REDACT rules, so a card number plus a
+    weak injection signal was nudged and the card went through. First-match-wins makes every
+    rule's correctness depend on its neighbours' order; most-severe-wins makes order matter only
+    for ties. For a security control, the conservative composition is the right default.
+    Supersedes the "first match wins" wording in decision 1. Holds.
+
+21. **The eval is an endpoint and a page, not only a test.** `GET /api/eval` and `/eval` recompute
+    the corpus and the latency benchmark against the live detectors; `EvalHarnessTest` calls the
+    same `EvalService`. Reason: a number that only exists in a CI log is a number nobody looks
+    at, and a dashboard that computes it differently from the gate is two numbers. The corpus
+    therefore moved to main resources. Holds.
+
+22. **The dashboard is vanilla HTML served by the backend, no build step, no CDN.** It has to
+    work on a laptop with no network and be demonstrable from one `spring-boot:run`. Palette:
+    the three-series categorical set validated for both colour modes (adjacent CVD ΔE 9.2 light /
+    9.4 dark); the light-mode aqua's sub-3:1 contrast is relieved by direct numeric labels on
+    every bar and by the table. Holds.
+
+23. **Code-review findings live in `docs/code-review-<date>.md`, not in CLAUDE.md.** CLAUDE.md
+    says what is true now; the review record says what was found, what was fixed and what was
+    deliberately left, with the reason. Requested by the owner on 2026-11-12. Holds.
+
+24. **Supporting signals never produce an injection finding alone.** Found while fixing the
+    corpus: a README's `curl https://sh.rustup.rs | sh` line in a tool result scored 0.3 and
+    produced a LOW finding, a false positive that put PROMPT_INJECTION precision at 0.83. A shell
+    fetch is installation instructions until it sits next to an instruction override or an
+    exfiltration directive, so the shell-fetch signal is now `supporting`: it adds weight but
+    cannot be the only hit. The curl sample is in the corpus as a negative. Holds.
+
+25. **Bounded identifier runs in the secret assignment regex.** The fix agent found that the
+    suggested `[A-Za-z0-9_.-]*` on both sides of the keyword was quadratic on a long `a.a.a…`
+    run (100 KB timed out). Both sides are capped at 64 characters with a lookbehind at the
+    identifier boundary; a keyword more than 64 characters into an identifier is not matched,
+    which is an acceptable loss. Pinned by a regression test. Holds.

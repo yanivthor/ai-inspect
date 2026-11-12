@@ -23,7 +23,20 @@ public final class TestServices {
     }
 
     public static InspectionService service(MeterRegistry registry) {
-        List<Detector> detectors = detectors();
+        return service(registry, List.of());
+    }
+
+    public static InspectionService service(MeterRegistry registry, List<Detector> extra) {
+        List<Detector> detectors = new java.util.ArrayList<>(detectors());
+        detectors.addAll(extra);
+        return new InspectionService(detectors, policyEngine(detectors), event -> {}, registry);
+    }
+
+    public static PolicyEngine policyEngine() {
+        return policyEngine(detectors());
+    }
+
+    private static PolicyEngine policyEngine(List<Detector> detectors) {
         var props = new InspectProperties(
                 List.of("chat.openai.com", "claude.ai", "copilot.microsoft.com"),
                 List.of(
@@ -34,6 +47,6 @@ public final class TestServices {
                         new PolicyRule(Action.REDACT, "redact", new When(null, Severity.HIGH, null, null, null, null)),
                         new PolicyRule(Action.NUDGE, "internal", new When(null, Severity.MEDIUM, null, null, null, null))),
                 new Webhook("", 1));
-        return new InspectionService(detectors, new PolicyEngine(props, detectors), event -> {}, registry);
+        return new PolicyEngine(props, detectors);
     }
 }

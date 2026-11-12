@@ -27,11 +27,10 @@ inspect:
     - claude.ai
     - copilot.microsoft.com
 
-  # Evaluated top to bottom; the first rule whose every condition matches decides. No match is
-  # ALLOW. Conditions are AND-ed; an absent condition matches anything.
-  #
-  # Order encodes priority: a live credential is blocked wherever it is going, before the
-  # destination-aware rules are even consulted.
+  # Every rule is evaluated; the matching rule with the most severe action wins
+  # (ALLOW < NUDGE < REDACT < BLOCK), and on a tie the earlier rule wins. No match is ALLOW.
+  # Conditions are AND-ed; an absent condition matches anything. A rule must name at least one
+  # of detector, severity or min-score. Order only breaks ties (which reason is reported).
   policies:
     - action: BLOCK
       reason: A live credential never leaves the device, whatever the destination.

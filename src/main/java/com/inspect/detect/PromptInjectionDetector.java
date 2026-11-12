@@ -38,7 +38,16 @@ public class PromptInjectionDetector implements Detector {
      * one. A {@code contains} over 15 KB costs microseconds, a case-insensitive regex with
      * alternations costs close to a millisecond, and most text contains none of these words.
      */
-    private record Signal(String name, Pattern pattern, double weight, List<String> hints) {
+    /**
+     * A {@code supporting} signal adds weight but never produces a finding on its own: a
+     * {@code curl https://…} line in a README is installation instructions, not an attack,
+     * until it appears next to an instruction override or an exfiltration directive.
+     */
+    private record Signal(String name, Pattern pattern, double weight, List<String> hints, boolean supporting) {
+        Signal(String name, Pattern pattern, double weight, List<String> hints) {
+            this(name, pattern, weight, hints, false);
+        }
+
         boolean mightMatch(String lower) {
             for (String h : hints) if (lower.contains(h)) return true;
             return false;
@@ -58,11 +67,14 @@ public class PromptInjectionDetector implements Detector {
                     Pattern.compile("(?i)\\b(?:reveal|print|show|repeat|output|display|leak|tell me)\\b[^.\\n]{0,30}?\\b(?:your|the|its)\\s+(?:system prompt|initial prompt|hidden (?:prompt|instructions)|secret instructions|instructions above|configuration)\\b"),
                     0.5, List.of("system prompt", "initial prompt", "hidden", "secret instructions", "instructions above", "configuration")),
             new Signal("exfiltration directive",
-                    Pattern.compile("(?i)\\b(?:send|post|upload|forward|email|transmit|exfiltrate|submit|leak)\\b[^\\n]{0,80}?\\b(?:to\\s+)?(?:https?://|ftp://|[a-z0-9-]+\\.[a-z0-9-]+\\.(?:com|net|io|org|xyz|ru|cn)\\b)"),
+                    // Both domain labels are capped at the DNS limit of 63, and the lookbehind makes a
+                    // label start only at a label boundary, so the lazy gap cannot retry the label
+                    // from every character of a long hyphen run (that was quadratic: 10 KB ~ 4 s).
+                    Pattern.compile("(?i)\\b(?:send|post|upload|forward|email|transmit|exfiltrate|submit|leak)\\b[^\\n]{0,80}?\\b(?:to\\s+)?(?:https?://|ftp://|(?<![a-z0-9-])[a-z0-9-]{1,63}\\.[a-z0-9-]{1,63}\\.(?:com|net|io|org|xyz|ru|cn)\\b)"),
                     0.6, List.of("send", "post", "upload", "forward", "email", "transmit", "exfiltrate", "submit", "leak")),
             new Signal("shell fetch",
                     Pattern.compile("(?i)\\b(?:curl|wget|Invoke-WebRequest)\\b[^\\n]{0,60}https?://"),
-                    0.3, List.of("curl", "wget", "invoke-webrequest")),
+                    0.3, List.of("curl", "wget", "invoke-webrequest"), true),
             new Signal("delimiter smuggling",
                     Pattern.compile("(?i)(?:</?(?:system|assistant|instructions?|developer)>|\\[(?:SYSTEM|INST|/INST)]|^#{2,}\\s*(?:system|instructions?)\\b|<\\|im_start\\|>|<\\|system\\|>|\\bBEGIN SYSTEM PROMPT\\b)", Pattern.MULTILINE),
                     0.5, List.of("<system", "</system", "<assistant", "</assistant", "<instruction", "</instruction", "<developer", "</developer", "[system]", "[inst]", "[/inst]", "##", "<|", "begin system prompt")),
@@ -90,6 +102,7 @@ public class PromptInjectionDetector implements Detector {
         String text = interaction.text();
         String lower = text.toLowerCase(Locale.ROOT);
         List<String> hits = new ArrayList<>();
+        boolean primaryHit = false;
         double survive = 1.0;      // product of (1 - weight): noisy-OR accumulator
         int firstStart = -1;
         int lastEnd = -1;
@@ -99,6 +112,7 @@ public class PromptInjectionDetector implements Detector {
             Matcher m = signal.pattern().matcher(text);
             if (m.find()) {
                 hits.add(signal.name());
+                if (!signal.supporting()) primaryHit = true;
                 survive *= (1 - signal.weight());
                 if (firstStart < 0 || m.start() < firstStart) firstStart = m.start();
                 if (m.end() > lastEnd) lastEnd = m.end();
@@ -113,6 +127,7 @@ public class PromptInjectionDetector implements Detector {
             for (Signal signal : SIGNALS) {
                 if (signal.mightMatch(decodedLower) && signal.pattern().matcher(decoded).find()) {
                     hits.add("base64-encoded " + signal.name());
+                    if (!signal.supporting()) primaryHit = true;
                     survive *= (1 - 0.7);
                     if (firstStart < 0 || b64.start() < firstStart) firstStart = b64.start();
                     if (b64.end() > lastEnd) lastEnd = b64.end();
@@ -129,7 +144,7 @@ public class PromptInjectionDetector implements Detector {
             if (zw.end() > lastEnd) lastEnd = zw.end();
         }
 
-        if (hits.isEmpty()) return List.of();
+        if (hits.isEmpty() || !primaryHit) return List.of();
 
         double score = 1 - survive;
         boolean discounted = interaction.direction() == Direction.PROMPT;

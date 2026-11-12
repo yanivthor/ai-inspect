@@ -63,6 +63,7 @@ public class InspectionService {
         long started = System.nanoTime();
 
         List<Finding> findings = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
         for (Detector detector : detectors) {
             try {
                 List<Finding> found = detector.detect(interaction);
@@ -73,6 +74,7 @@ public class InspectionService {
                 }
             } catch (RuntimeException e) {
                 log.error("Detector {} failed; continuing without it", detector.id(), e);
+                failed.add(detector.id());
                 Counter.builder("inspect.detector.errors").tag("detector", detector.id())
                         .register(registry).increment();
             }
@@ -82,7 +84,8 @@ public class InspectionService {
         Optional<PolicyRule> matched = policy.decide(interaction, findings);
         Action action = matched.map(PolicyRule::action).orElse(Action.ALLOW);
         String explanation = matched.map(PolicyRule::reason).orElse(
-                findings.isEmpty() ? "Nothing sensitive found." : "Findings below the policy threshold.");
+                findings.isEmpty() ? (failed.isEmpty() ? "Nothing sensitive found."
+                        : "Nothing found, but detectors failed: " + String.join(", ", failed) + ".") : "Findings below the policy threshold.");
         String redacted = action == Action.REDACT ? Redactor.redact(interaction.text(), findings) : null;
 
         long elapsedNanos = System.nanoTime() - started;
@@ -90,7 +93,7 @@ public class InspectionService {
         Counter.builder("inspect.decisions").tag("action", action.name()).register(registry).increment();
 
         Decision decision = new Decision(interaction.interactionId(), action, List.copyOf(findings),
-                redacted, explanation, elapsedNanos / 1_000_000);
+                redacted, explanation, elapsedNanos / 1_000_000, List.copyOf(failed));
         events.publishEvent(new InspectionDecided(interaction, decision));
         return decision;
     }

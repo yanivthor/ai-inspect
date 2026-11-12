@@ -56,7 +56,7 @@ public class SecretDetector implements Detector {
                     Pattern.compile("(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
                     Severity.HIGH, "Matches the Anthropic API key format.", List.of("sk-ant-")),
             new Rule("OpenAI API key",
-                    Pattern.compile("(?<![A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])"),
+                    Pattern.compile("(?<![A-Za-z0-9_-])sk-(?!ant-)(?:proj-)?[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])"),
                     Severity.HIGH, "Matches the OpenAI API key format.", List.of("sk-")),
             new Rule("private key block",
                     Pattern.compile("-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----"),
@@ -66,9 +66,13 @@ public class SecretDetector implements Detector {
                     Severity.HIGH, "A signed JSON Web Token.", List.of("eyJ"))
     );
 
-    /** {@code api_key: value}, {@code password=value}, {@code "token": "value"} and friends. */
+    /**
+     * The identifier may carry the keyword anywhere (OPENAI_API_KEY, dbPassword), so \\b is no use;
+     * the lookbehind starts a match only at an identifier boundary and the {0,64} caps keep
+     * a long run of identifier characters from being rescanned from every position.
+     * {@code api_key: value}, {@code password=value}, {@code "token": "value"} and friends. */
     private static final Pattern ASSIGNMENT = Pattern.compile(
-            "(?i)\\b(api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|auth[_-]?token|token|password|passwd|pwd|client[_-]?secret)\\b\"?\\s*[:=]\\s*[\"']?([^\\s\"',;]{8,})");
+            "(?i)(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{0,64}(?:api[_-]?key|secret|token|password|passwd|pwd)[A-Za-z0-9_.-]{0,64})\\s*\"?\\s*[:=]\\s*[\"']?([^\\s\"',;]{8,})");
 
     private static final Pattern PLACEHOLDER = Pattern.compile(
             "(?i)^(?:<.*>|\\$\\{.*}|\\{\\{.*}}|x{4,}|\\*{4,}|\\.{3,}|.*(?:example|placeholder|your[_-]|changeme|redacted|dummy|sample|insert|replace|todo|fixme|password123|secret123).*)$");
@@ -96,12 +100,16 @@ public class SecretDetector implements Detector {
             }
         }
 
-        if (!mightContainAssignment(text)) return findings;
+        if (!mightContainAssignment(text)) return dedupe(findings);
         Matcher m = ASSIGNMENT.matcher(text);
         while (m.find()) {
             String value = m.group(2);
             if (overlapsAny(findings, m.start(2), m.end(2))) continue;
             if (PLACEHOLDER.matcher(value).matches() || looksLikeExample(value)) continue;
+            // A call or a path is code or config plumbing, not a credential:
+            // token = tokenizer.encode(text), token: /var/run/secrets/...
+            if (value.indexOf('(') >= 0 || value.indexOf(')') >= 0
+                    || value.startsWith("/") || value.startsWith("./")) continue;
             double entropy = Entropy.bitsPerChar(value);
             if (entropy < MIN_ENTROPY_BITS) continue;
             findings.add(new Finding(ID, Severity.HIGH, m.start(2), m.end(2),
@@ -110,7 +118,17 @@ public class SecretDetector implements Detector {
                             m.group(1), entropy),
                     Math.min(1.0, 0.7 + (entropy - MIN_ENTROPY_BITS) * 0.3)));
         }
-        return findings;
+        return dedupe(findings);
+    }
+
+    /** Two rules can claim the same span (an Anthropic key also looks like an OpenAI one); keep the first. */
+    private static List<Finding> dedupe(List<Finding> findings) {
+        List<Finding> out = new ArrayList<>(findings.size());
+        java.util.Set<Long> seen = new java.util.HashSet<>();
+        for (Finding f : findings) {
+            if (seen.add(((long) f.start() << 32) | f.end())) out.add(f);
+        }
+        return out;
     }
 
     private static final List<String> ASSIGNMENT_HINTS =

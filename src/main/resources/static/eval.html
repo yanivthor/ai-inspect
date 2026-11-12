@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inspect eval dashboard</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb; --surface-2: #f3f2ef; --border: #e2e0da;
+    --text: #0b0b0b; --text-2: #52514e; --text-3: #85837c;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;      /* categorical: precision, recall, F1 */
+    --seq: #2a78d6; --seq-track: #e2e0da;
+    --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+    --mark-bg: #fff3b0; --mark-fg: #0b0b0b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface: #1a1a19; --surface-2: #242423; --border: #383835;
+      --text: #f0efec; --text-2: #c3c2b7; --text-3: #8d8c84;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+      --seq: #3987e5; --seq-track: #383835;
+      --mark-bg: #5a4a00; --mark-fg: #f0efec;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface: #1a1a19; --surface-2: #242423; --border: #383835;
+    --text: #f0efec; --text-2: #c3c2b7; --text-3: #8d8c84;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --seq: #3987e5; --seq-track: #383835;
+    --mark-bg: #5a4a00; --mark-fg: #f0efec;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 32px 0 10px; color: var(--text-2); font-weight: 600;
+       text-transform: uppercase; letter-spacing: .04em; }
+  .sub { color: var(--text-2); margin: 0 0 20px; }
+  .sub code, td code, .mono { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .tile { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .tile .k { color: var(--text-2); font-size: 12px; }
+  .tile .v { font-size: 26px; font-weight: 600; letter-spacing: -.01em; margin-top: 2px; }
+  .tile .u { color: var(--text-3); font-size: 12px; }
+  .tile.ok .v::before, .tile.bad .v::before { content: ""; display: inline-block; width: 9px; height: 9px;
+       border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+  .tile.ok .v::before { background: var(--good); } .tile.bad .v::before { background: var(--critical); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-2); font-weight: 600; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .bars { display: grid; grid-template-columns: 1fr; gap: 3px; min-width: 180px; }
+  .bar { display: grid; grid-template-columns: 1fr 44px; align-items: center; gap: 8px; height: 12px; }
+  .bar .track { height: 8px; background: var(--seq-track); border-radius: 4px; overflow: hidden; }
+  .bar .fill { height: 100%; border-radius: 0 4px 4px 0; }
+  .bar .lab { font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; text-align: right; }
+  .legend { display: flex; gap: 16px; margin: 6px 0 10px; color: var(--text-2); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+       margin-right: 6px; vertical-align: -1px; }
+  .legend .p::before { background: var(--s1); } .legend .r::before { background: var(--s2); } .legend .f::before { background: var(--s3); }
+  .hbar { display: grid; grid-template-columns: 150px 1fr 70px; align-items: center; gap: 10px; padding: 4px 0; }
+  .hbar .track { height: 10px; background: var(--seq-track); border-radius: 4px; overflow: hidden; }
+  .hbar .fill { height: 100%; background: var(--seq); border-radius: 0 4px 4px 0; }
+  .hbar .lab { color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+  .hbar:hover .track { outline: 2px solid var(--text-3); outline-offset: 1px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .status::before { font-size: 11px; }
+  .status.PASS { color: var(--good); } .status.PASS::before { content: "✓"; }
+  .status.FALSE_POSITIVE { color: var(--critical); } .status.FALSE_POSITIVE::before { content: "✕"; }
+  .status.FALSE_NEGATIVE { color: var(--serious); } .status.FALSE_NEGATIVE::before { content: "○"; }
+  .status.BOTH { color: var(--critical); } .status.BOTH::before { content: "✕"; }
+  .chip { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border);
+          color: var(--text-2); margin: 1px 3px 1px 0; white-space: nowrap; }
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+  select, input, textarea, button { font: inherit; color: var(--text); background: var(--surface-2);
+          border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; }
+  textarea { width: 100%; min-height: 110px; resize: vertical; }
+  button { cursor: pointer; } button.primary { background: var(--s1); color: #fff; border-color: transparent; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 10px 0; }
+  .muted { color: var(--text-3); }
+  .text { white-space: pre-wrap; word-break: break-word; }
+  mark { background: var(--mark-bg); color: var(--mark-fg); border-radius: 2px; padding: 0 1px; }
+  .verdict { display: flex; gap: 14px; align-items: baseline; margin: 12px 0 8px; }
+  .verdict .a { font-size: 22px; font-weight: 700; }
+  .verdict .a.ALLOW { color: var(--good); } .verdict .a.NUDGE { color: var(--warning); }
+  .verdict .a.REDACT { color: var(--serious); } .verdict .a.BLOCK { color: var(--critical); }
+  details summary { cursor: pointer; color: var(--text-2); }
+  .spin { color: var(--text-3); }
+  .err { color: var(--critical); }
+  @media (max-width: 640px) { .hbar { grid-template-columns: 110px 1fr 60px; } th:nth-child(5), td:nth-child(5) { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Inspect eval dashboard</h1>
+  <p class="sub">Live numbers from <code>GET /api/eval</code> and <code>GET /api/eval/latency</code>, recomputed on every refresh
+    against the detectors currently running. The same code gates the build in <code>EvalHarnessTest</code>.</p>
+
+  <div class="tiles" id="tiles"><div class="tile"><div class="k">Loading eval…</div></div></div>
+
+  <h2>Per detector</h2>
+  <div class="legend"><span class="p">Precision</span><span class="r">Recall</span><span class="f">F1</span>
+    <span class="muted" style="margin-left:auto">build gate: precision ≥ 0.90, recall ≥ 0.80</span></div>
+  <table id="detectors"><thead><tr>
+    <th>Detector</th><th class="num">TP</th><th class="num">FP</th><th class="num">FN</th><th class="num">TN</th><th>Precision · Recall · F1</th>
+  </tr></thead><tbody></tbody></table>
+
+  <h2>Latency, mean cost per detector <span class="muted" id="latency-note"></span></h2>
+  <div id="latency"><span class="spin">Running 300 timed inspections of a 15 KB document…</span></div>
+
+  <h2>Try it</h2>
+  <div class="row">
+    <input id="dest" value="claude.ai" title="destination">
+    <select id="channel"><option>BROWSER</option><option>CLI</option><option>MCP</option></select>
+    <select id="direction"><option>PROMPT</option><option>RESPONSE</option></select>
+    <button class="primary" id="go">Inspect</button>
+  </div>
+  <textarea id="text">Hi support, I was double charged on my Visa 4539 1488 0343 6467 last Tuesday. Also our deploy key is AKIA3K7Q2M9XJ4L8ZP6R, can you check the logs?</textarea>
+  <div id="verdict"></div>
+
+  <h2>Corpus samples <span class="muted" id="count"></span></h2>
+  <div class="filters">
+    <select id="f-outcome"><option value="">All outcomes</option><option>PASS</option><option>FALSE_POSITIVE</option><option>FALSE_NEGATIVE</option><option>BOTH</option></select>
+    <select id="f-detector"><option value="">All detectors</option></select>
+    <input id="f-text" placeholder="search text or id" style="flex:1;min-width:160px">
+  </div>
+  <table id="samples"><thead><tr>
+    <th>Id</th><th>Outcome</th><th>Expected</th><th>Fired</th><th>Text</th>
+  </tr></thead><tbody></tbody></table>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pct = x => (x * 100).toFixed(1) + '%';
+const fmt3 = x => x.toFixed(3);
+let report = null;
+
+function bar(cls, value) {
+  const color = {p:'var(--s1)', r:'var(--s2)', f:'var(--s3)'}[cls];
+  return `<div class="bar"><div class="track"><div class="fill" style="width:${(value*100).toFixed(1)}%;background:${color}"></div></div><div class="lab">${fmt3(value)}</div></div>`;
+}
+
+function renderTiles(r) {
+  const t = r.total;
+  const worstP = Math.min(...r.detectors.map(d => d.precision));
+  const worstR = Math.min(...r.detectors.map(d => d.recall));
+  const gate = worstP >= 0.9 && worstR >= 0.8;
+  $('#tiles').innerHTML = `
+    <div class="tile"><div class="k">Corpus samples</div><div class="v">${r.samples}</div><div class="u">${r.results.filter(x=>x.expected.length===0).length} negatives</div></div>
+    <div class="tile ${gate?'ok':'bad'}"><div class="k">Build gate</div><div class="v">${gate?'pass':'FAIL'}</div><div class="u">worst precision ${fmt3(worstP)}, recall ${fmt3(worstR)}</div></div>
+    <div class="tile"><div class="k">Micro precision</div><div class="v">${fmt3(t.precision)}</div><div class="u">${t.tp} TP · ${t.fp} FP</div></div>
+    <div class="tile"><div class="k">Micro recall</div><div class="v">${fmt3(t.recall)}</div><div class="u">${t.fn} FN</div></div>
+    <div class="tile"><div class="k">Micro F1</div><div class="v">${fmt3(t.f1)}</div><div class="u">${r.detectors.length} detectors</div></div>
+    <div class="tile" id="tile-p95"><div class="k">p95 latency</div><div class="v spin">…</div><div class="u">budget 20 ms</div></div>`;
+}
+
+function renderDetectors(r) {
+  $('#detectors tbody').innerHTML = r.detectors.map(d => `<tr>
+    <td><code>${esc(d.detector)}</code></td>
+    <td class="num">${d.tp}</td><td class="num">${d.fp}</td><td class="num">${d.fn}</td><td class="num">${d.tn}</td>
+    <td><div class="bars">${bar('p', d.precision)}${bar('r', d.recall)}${bar('f', d.f1)}</div></td></tr>`).join('');
+  const sel = $('#f-detector');
+  r.detectors.forEach(d => { const o = document.createElement('option'); o.textContent = d.detector; sel.appendChild(o); });
+}
+
+function renderSamples() {
+  const o = $('#f-outcome').value, d = $('#f-detector').value, q = $('#f-text').value.toLowerCase();
+  const rows = report.results.filter(s => (!o || s.outcome === o)
+      && (!d || s.expected.includes(d) || s.actual.includes(d))
+      && (!q || s.id.toLowerCase().includes(q) || s.text.toLowerCase().includes(q)));
+  $('#count').textContent = `${rows.length} of ${report.results.length}`;
+  $('#samples tbody').innerHTML = rows.map(s => `<tr>
+    <td><code>${esc(s.id)}</code><div class="muted mono">${s.direction}</div></td>
+    <td><span class="status ${s.outcome}">${s.outcome.replace('_', ' ')}</span></td>
+    <td>${s.expected.length ? s.expected.map(x => `<span class="chip">${esc(x)}</span>`).join('') : '<span class="muted">none</span>'}</td>
+    <td>${s.actual.length ? s.actual.map(x => `<span class="chip" style="${s.falsePositives.includes(x)?'border-color:var(--critical);color:var(--critical)':''}">${esc(x)}</span>`).join('') : '<span class="muted">none</span>'}</td>
+    <td class="text">${esc(s.text)}</td></tr>`).join('');
+}
+
+function renderLatency(l) {
+  const max = Math.max(...Object.values(l.perDetectorMs), 0.001);
+  const rows = Object.entries(l.perDetectorMs).sort((a, b) => b[1] - a[1]);
+  $('#latency').innerHTML = `
+    <div class="tiles" style="margin-bottom:14px">
+      <div class="tile"><div class="k">p50</div><div class="v">${l.p50Ms.toFixed(1)}<span class="u"> ms</span></div></div>
+      <div class="tile ${l.p95Ms < 20 ? 'ok' : 'bad'}"><div class="k">p95</div><div class="v">${l.p95Ms.toFixed(1)}<span class="u"> ms</span></div><div class="u">budget 20 ms</div></div>
+      <div class="tile"><div class="k">p99</div><div class="v">${l.p99Ms.toFixed(1)}<span class="u"> ms</span></div></div>
+      <div class="tile"><div class="k">max</div><div class="v">${l.maxMs.toFixed(1)}<span class="u"> ms</span></div><div class="u">${l.runs} runs · ${(l.textBytes/1024).toFixed(1)} KB</div></div>
+    </div>
+    ${rows.map(([k, v]) => `<div class="hbar" title="${esc(k)}: ${v.toFixed(3)} ms mean"><code>${esc(k)}</code><div class="track"><div class="fill" style="width:${(v / max * 100).toFixed(1)}%"></div></div><div class="lab">${v.toFixed(2)} ms</div></div>`).join('')}`;
+  const tile = $('#tile-p95');
+  if (tile) { tile.className = 'tile ' + (l.p95Ms < 20 ? 'ok' : 'bad'); tile.querySelector('.v').textContent = l.p95Ms.toFixed(1) + ' ms'; tile.querySelector('.v').classList.remove('spin'); }
+  $('#latency-note').textContent = `(${l.runs} runs over ${(l.textBytes/1024).toFixed(1)} KB)`;
+}
+
+function highlight(text, findings) {
+  const spans = findings.map(f => ({ s: f.start, e: f.end, d: f.detector })).sort((a, b) => a.s - b.s);
+  let out = '', cursor = 0;
+  for (const sp of spans) {
+    if (sp.s < cursor) continue;
+    out += esc(text.slice(cursor, sp.s)) + `<mark title="${esc(sp.d)}">${esc(text.slice(sp.s, sp.e))}</mark>`;
+    cursor = sp.e;
+  }
+  return out + esc(text.slice(cursor));
+}
+
+async function inspect() {
+  const body = { user: 'dashboard', destination: $('#dest').value, channel: $('#channel').value,
+                 direction: $('#direction').value, text: $('#text').value };
+  $('#verdict').innerHTML = '<span class="spin">Inspecting…</span>';
+  try {
+    const res = await fetch('/api/inspect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json();
+    if (!res.ok) { $('#verdict').innerHTML = `<p class="err">${esc(d.detail || res.status)}</p>`; return; }
+    $('#verdict').innerHTML = `
+      <div class="verdict"><span class="a ${d.action}">${d.action}</span><span>${esc(d.explanation)}</span><span class="muted">${d.latencyMs} ms${d.failedDetectors && d.failedDetectors.length ? ' · degraded: ' + esc(d.failedDetectors.join(', ')) : ''}</span></div>
+      <div class="text" style="padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2)">${highlight(body.text, d.findings)}</div>
+      ${d.redactedText ? `<details style="margin-top:8px"><summary>Redacted text</summary><div class="text mono">${esc(d.redactedText)}</div></details>` : ''}
+      ${d.findings.length ? `<table style="margin-top:10px"><thead><tr><th>Detector</th><th>Severity</th><th class="num">Score</th><th>Evidence</th><th>Why</th></tr></thead><tbody>
+        ${d.findings.map(f => `<tr><td><code>${esc(f.detector)}</code></td><td>${esc(f.severity)}</td><td class="num">${f.score.toFixed(2)}</td><td class="mono">${esc(f.evidence)}</td><td>${esc(f.explanation)}</td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted">No findings.</p>'}`;
+  } catch (e) { $('#verdict').innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+
+async function load() {
+  try {
+    report = await (await fetch('/api/eval')).json();
+    renderTiles(report); renderDetectors(report); renderSamples();
+  } catch (e) { $('#tiles').innerHTML = `<div class="tile"><div class="k err">Could not load /api/eval: ${esc(e.message)}</div></div>`; }
+  try {
+    renderLatency(await (await fetch('/api/eval/latency?runs=300')).json());
+  } catch (e) { $('#latency').innerHTML = `<p class="err">Could not load /api/eval/latency: ${esc(e.message)}</p>`; }
+}
+['#f-outcome', '#f-detector', '#f-text'].forEach(s => $(s).addEventListener('input', renderSamples));
+$('#go').addEventListener('click', inspect);
+load();
+</script>
+</body>
+</html>

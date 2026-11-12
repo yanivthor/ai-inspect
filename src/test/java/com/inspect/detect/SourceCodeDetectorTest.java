@@ -47,4 +47,13 @@ class SourceCodeDetectorTest {
     void singleCodeLikeLineIsNotFound() {
         assertThat(detector.detect(prompt("x = 1;"))).isEmpty();
     }
+
+    @Test
+    void crlfDoesNotDriftTheStartOffset() {
+        String prose = "Notes for the review\r\nplease read before Friday\r\nthanks all\r\n";
+        String code = "public class A {\r\n    private int x;\r\n    public int x() { return x; }\r\n}\r\n";
+        var f = detector.detect(prompt(prose + code));
+        assertThat(f).hasSize(1);
+        assertThat(f.get(0).start()).isEqualTo(prose.length());
+    }
 }
